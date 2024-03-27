@@ -1,0 +1,22 @@
+[package]
+name = "glass-gui"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+chrono = "0.4.34"
+eframe = { version = "0.26.1", features = [ "default_fonts", "glow" ] }
+egui_extras = { version = "0.26.1", features = ["default", "image"] }
+egui_plot = "0.26.2"
+env_logger = "0.11.1"
+rusb = "0.9.3"
+
+bayer = "0.1.5"
+
+rand = "0.8.5"
+
+glass-mu1603 = { path = "../glass-mu1603" }
+glass-common = { path = "../glass-common" }
+glass-glow = { path = "../glass-glow" }

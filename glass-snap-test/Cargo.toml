@@ -1,0 +1,10 @@
+[package]
+name = "glass-snap-test"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+glass-mu1603 = { path = "../glass-mu1603" }
+rusb = "0.9.3"

@@ -1,0 +1,9 @@
+[workspace]
+members = [
+	"glass-common", 
+	"glass-mu1603",
+	"glass-gui", 
+	"glass-glow", 
+	"glass-snap-test", 
+]
+resolver = "2"
