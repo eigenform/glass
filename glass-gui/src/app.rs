@@ -11,6 +11,7 @@ use crate::log::*;
 use crate::glow::*;
 use crate::ipc::*;
 use glass_mu1603::*;
+use glass_common::*;
 
 #[derive(Debug)]
 pub enum AppError {
@@ -50,12 +51,15 @@ pub struct MyApp {
 
     preview_glow: PreviewGlow,
 
+    acquire_data: Arc<RwLock<PixelData>>,
+    acquire_pending: bool,
+
     angle: f32,
     //rotating_triangle: Arc<Mutex<RotatingTriangle>>,
 }
 impl MyApp {
     pub fn new(cc: &eframe::CreationContext<'_>, chan: EguiThreadChannels,
-        rgb_data: Arc<RwLock<RgbData>>,
+        rgb_data: Arc<RwLock<PixelData>>,
     ) -> Self 
     { 
         //let mut f = std::fs::File::open("/tmp/wow.rgb16.tif").unwrap();
@@ -75,14 +79,13 @@ impl MyApp {
 
         // State for glow usage via paint callbacks
         let gl = cc.gl.as_ref().expect("No glow backend?");
-        //let rotating_triangle = Arc::new(Mutex::new(RotatingTriangle::new(gl)));
 
-        //let preview = PreviewState::new(
-        //    ctx,
-        //    Mu1603::DEFAULT_MODE.width(),
-        //    Mu1603::DEFAULT_MODE.height(),
-        //    1
-        //);
+        // FIXME: This needs to match the dimensions of 'rgb_data'
+        let acquire_data = Arc::new(RwLock::new(PixelData::new(
+            PixelFormat::RGB8, 2320, 1740
+        )));
+        let acquire_data_clone = acquire_data.clone();
+
 
         Self {
             chan,
@@ -90,9 +93,9 @@ impl MyApp {
             log_entries: VecDeque::new(),
             cam_state: None,
             angle: 0.0,
-            //rotating_triangle,
-            //preview,
-            preview_glow: PreviewGlow::new(rgb_data),
+            preview_glow: PreviewGlow::new(rgb_data, acquire_data_clone),
+            acquire_data,
+            acquire_pending: false,
         }
     }
 
@@ -112,7 +115,10 @@ impl MyApp {
     fn draw_viewport(&mut self, ui: &mut egui::Ui) {
         let (rect, _) = ui.allocate_exact_size(
             egui::Vec2::new(2320.0, 1740.0), egui::Sense::hover()
+            //egui::Vec2::new(1780.0, 1335.0), egui::Sense::hover()
         );
+        ui.painter().add(self.preview_glow.get_paint_callback(rect));
+
 
         //let callback = egui::PaintCallback {
         //    rect, callback: Arc::new(egui_glow::CallbackFn::new(
@@ -123,7 +129,6 @@ impl MyApp {
         //    )),
         //};
 
-        ui.painter().add(self.preview_glow.paint(rect));
 
 
         //let (rect, response) = ui.allocate_exact_size(
@@ -178,17 +183,24 @@ impl MyApp {
             Ok(msg) => {
                 self.push_log(LogEvent::CameraMsg(msg));
                 match msg { 
-                    CameraMessage::Connected => {},
-                    CameraMessage::Disconnected => {},
-                    CameraMessage::ThreadInit => {},
-                    CameraMessage::StartStreaming => {},
+                    CameraMessage::Connected => {
+                    },
+                    CameraMessage::Disconnected => {
+                    },
+                    CameraMessage::ThreadInit => {
+                    },
+                    CameraMessage::StartStreaming => {
+                    },
                     CameraMessage::UpdateAck(state) => {
                     },
                     CameraMessage::ConnectFailure(e) => {
                     },
+                    CameraMessage::Debug(msg) => {
+                    }
                 }
             },
-            Err(TryRecvError::Empty) => {},
+            Err(TryRecvError::Empty) => {
+            },
             Err(TryRecvError::Disconnected) => {
                 self.log_entries.push_back(
                     LogEntry::new(LogEvent::LostThread)
@@ -328,10 +340,17 @@ impl MyApp {
                 .min_size([100.0,50.0].into());
 
             let snap_button_resp  = 
-                ui.add_enabled(camera_connected, snap_button);
+                //ui.add_enabled(camera_connected, snap_button);
+                ui.add_enabled(true, snap_button);
             if snap_button_resp.enabled() && snap_button_resp.clicked() {
                 self.push_log(LogEvent::Acquire);
                 snap_button_resp.highlight();
+
+                self.acquire_pending = true;
+                // FIXME: No idea if this works, lol
+                //ui.painter().add(
+                //    self.preview_glow.get_acquire_callback(egui::Rect::ZERO)
+                //);
             }
         });
         ui.separator();
@@ -380,6 +399,16 @@ impl eframe::App for MyApp {
 
         // Handle pending messages from the camera thread
         self.check_camera_thread();
+
+        // FIXME: This is fine for *testing* acquisition, for now
+        if self.acquire_pending { 
+            use std::io::Write;
+            if let Ok(acquire_data) = self.acquire_data.read() {
+                let mut f = std::fs::File::create("/tmp/wow.rgb8.raw").unwrap();
+                f.write_all(&acquire_data.data).unwrap();
+            }
+            self.acquire_pending = false;
+        }
 
         // Draw the control panel on the left side panel
         egui::SidePanel::left("Control Panel").show(ctx, |panel| 

@@ -6,11 +6,11 @@ use std::sync::{ Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard };
 use std::time::Duration;
 use crate::ipc::*;
 use glass_mu1603::*;
-use crate::glow::RgbData;
 use rand::prelude::*;
+use glass_common::*;
 use bayer;
 
-pub fn spawn_camera_thread(chan: CameraThreadChannels, rgb_data: Arc<RwLock<RgbData>>)
+pub fn spawn_camera_thread(chan: CameraThreadChannels, rgb_data: Arc<RwLock<PixelData>>)
     -> std::thread::JoinHandle<Result<(), CameraThreadError>>
 {
     let handle = std::thread::spawn(move || { 
@@ -33,11 +33,11 @@ pub struct CameraThreadState {
     streaming: bool,
     cam: Option<Mu1603>,
 
-    rgb_data: Arc<RwLock<RgbData>>,
+    rgb_data: Arc<RwLock<PixelData>>,
 
 }
 impl CameraThreadState {
-    pub fn new(chan: CameraThreadChannels, rgb_data: Arc<RwLock<RgbData>>) -> Self { 
+    pub fn new(chan: CameraThreadChannels, rgb_data: Arc<RwLock<PixelData>>) -> Self { 
         Self { 
             ctx: Context::new().unwrap(),
             chan,
@@ -74,44 +74,6 @@ impl CameraThreadState {
 
 
 impl CameraThreadState {
-    pub fn simulate_frame_write(&mut self, val: usize) {
-        {
-            use std::ops::{SubAssign, Sub};
-            use std::simd::num::SimdUint;
-            let mut rgb_data = self.rgb_data.write().unwrap();
-            let slice = rgb_data.data.as_mut_slice();
-
-            
-
-            //let x = val % 2320;
-            //let y = val % 1740;
-            //rgb_data.write_pixel(x, y, 0xff, 0x10, 0x10);
-
-            //// Let all of the values decay each frame
-            let simd = slice.as_simd_mut::<64>();
-            let simd_1 = std::simd::u8x64::from([1; 64]);
-            for val in simd.0 { *val = val.saturating_sub(1); }
-            for chunk in simd.1 { *chunk = chunk.saturating_sub(simd_1); }
-            for val in simd.2 { *val = val.saturating_sub(1); }
-
-            //// Write some random pixels
-            let mut rng = rand::thread_rng();
-            for _ in 0..20 {
-                let x = rng.gen_range(10..=rgb_data.width-10);
-                let y = rng.gen_range(10..=rgb_data.height-10);
-                let r = rng.gen::<u8>();
-                let g = rng.gen::<u8>();
-                let b = rng.gen::<u8>();
-                for i in 0..8 {
-                    for j in 0..8 {
-                        rgb_data.write_pixel(x+i, y+j, r, g, b);
-                    }
-                }
-            }
-        }
-        std::thread::sleep(Duration::from_millis(1));
-    }
-
     pub fn main_loop(&mut self) -> Result<(), CameraThreadError> 
     {
         let mut iter: usize = 0;
@@ -141,12 +103,22 @@ impl CameraThreadState {
                 },
             }
 
-            self.simulate_frame_write(iter);
+            //self.simulate_frame_write(iter);
 
             if let Some(cam) = &mut self.cam {
                 match cam.try_read_frame() {
                     Ok(data) => {
-                        self.chan.send_frame_update(data);
+                        //self.chan.send_frame_update(data);
+                        if let Ok(mut lock) = self.rgb_data.try_write() {
+                            if let Err(e) = lock.fill_from_slice(&data) { 
+                                println!("{}", e);
+                            } else { 
+                                lock.increment_frame_id();
+                            }
+                        } else { 
+                            println!("try_write failed");
+
+                        }
                     },
                     Err(e) => { 
                         match e {
@@ -181,7 +153,8 @@ impl CameraThreadState {
 
         // Try to connect to the camera
         let resp = match Mu1603::try_open(&mut self.ctx) { 
-            Ok(cam) => {
+            Ok(mut cam) => {
+                cam.start_stream(Mu1603Mode::Mode1).unwrap();
                 self.cam = Some(cam);
                 CameraMessage::Connected
             },
@@ -193,6 +166,9 @@ impl CameraThreadState {
     }
     pub fn handle_disconnect(&mut self) -> Result<(), CameraThreadError> 
     {
+        if let Some(ref mut cam) = &mut self.cam {
+            cam.stop_stream().unwrap();
+        }
         Ok(())
     }
 

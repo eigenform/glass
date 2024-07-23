@@ -6,11 +6,10 @@ mod log;
 mod camera;
 mod ipc;
 mod glow;
-//mod gl;
 mod app;
 
 use std::sync::{Arc, RwLock};
-use crate::glow::RgbData;
+use glass_common::*;
 
 fn main() -> Result<(), eframe::Error> {
     //env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
@@ -32,7 +31,11 @@ fn main() -> Result<(), eframe::Error> {
         frame_tx, ctl_rx, state_tx
     };
 
-    let rgb_data = Arc::new(RwLock::new(RgbData::new(2320, 1740)));
+    // FIXME: This needs to scale with the configured camera resolution. 
+    // We are assuming use of mode 1. 
+    let rgb_data = Arc::new(RwLock::new(
+            PixelData::new(PixelFormat::Bayer8(BayerPattern::BGGR), 2320, 1740)
+    ));
     let rgb_data_clone = rgb_data.clone();
 
     // Spawn the camera thread. 

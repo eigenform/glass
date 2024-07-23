@@ -1,6 +1,6 @@
 
 use std::sync::mpsc::{ Sender, Receiver, SendError, TryRecvError };
-use mu1603::*;
+use glass_mu1603::*;
 
 /// Control messages from the egui thread to the camera thread.
 #[derive(Copy, Clone, Debug)]
@@ -42,6 +42,8 @@ pub enum CameraMessage {
 
     /// The camera thread has acknowledged an update to the camera state
     UpdateAck(Mu1603State),
+
+    Debug(&'static str),
 }
 
 pub struct EguiThreadChannels { 
@@ -107,7 +109,10 @@ pub struct CameraThreadChannels {
 }
 impl CameraThreadChannels {
     pub fn send_state_update(&mut self, msg: CameraMessage) {
-        self.state_tx.send(msg).unwrap();
+        if let Err(send_err) = self.state_tx.send(msg) { 
+            println!("Failed to send state update to camera: {:?}, {}", 
+                msg, send_err);
+        }
     }
 
     pub fn send_frame_update(&mut self, data: Vec<u8>) {

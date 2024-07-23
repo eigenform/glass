@@ -7,7 +7,7 @@ pub struct DemosaicQuad {
     program: Option<glow::Program>,
     vao: Option<glow::VertexArray>,
     vbo: Option<glow::Buffer>,
-    texture: Option<glow::Texture>,
+    pub texture: Option<glow::Texture>,
 
     width: usize,
     height: usize,
@@ -64,6 +64,17 @@ impl GlowProgram for DemosaicQuad {
 
     fn is_initialized(&self) -> bool { self.initialized }
 
+    // NOTE: This sensor is apparently BGGR (red component at [1,1]).
+    // This is configured with the 'firstRed' uniform. 
+    // Some other patterns for reference: 
+    //
+    // RGGB | GRGB | BGRG | BGGR
+    // -----+------+------+------
+    //  R G | G R  | B G  | B G
+    //  G B | G B  | R G  | G R
+    // -----+------+------+------
+    // [0,0]| [0,1]| [1,0]| [1,1]
+    //
     fn init(&mut self, gl: &glow::Context) -> Result<(), String> {
         let program = unsafe { 
             GlowHelper::compile_and_link(gl, Self::VERT_SRC, Self::FRAG_SRC)
@@ -71,6 +82,7 @@ impl GlowProgram for DemosaicQuad {
         self.program = Some(program);
         unsafe { 
             gl.use_program(self.program);
+
             let vao = gl.create_vertex_array()?;
             gl.bind_vertex_array(Some(vao));
             self.vao = Some(vao);
@@ -102,21 +114,11 @@ impl GlowProgram for DemosaicQuad {
             gl.enable_vertex_attrib_array(tex_coord);
 
             let texture = GlowHelper::allocate_bind_texture(&gl,
-                PixelFormat::Bayer8(BayerPattern::RGGB), 
+                PixelFormat::Bayer8(BayerPattern::BGGR), 
                 self.width, self.height
             )?;
             self.texture = Some(texture);
 
-            // NOTE: This sensor is apparently BGGR (red component at [1,1]).
-            // Some other patterns for reference: 
-            //
-            // RGGB | GRGB | BGRG | BGGR
-            // -----+------+------+------
-            //  R G | G R  | B G  | B G
-            //  G B | G B  | R G  | G R
-            // -----+------+------+------
-            // [0,0]| [0,1]| [1,0]| [1,1]
-            //
             let u_firstred = gl.get_uniform_location(
                 self.program.unwrap(), "firstRed"
             ).expect("");

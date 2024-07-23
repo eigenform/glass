@@ -237,6 +237,7 @@ impl Mu1603 {
             bitdepth: Mu1603BitDepth::Depth8,
         };
         self.state = Some(state);
+        println!("[*] Driver started streaming");
 
         Ok(())
     }
@@ -259,6 +260,7 @@ impl Mu1603 {
 
         self.prev_state = self.state;
         self.state = None;
+        println!("[*] Driver stopped streaming");
         Ok(())
     }
 }
@@ -295,8 +297,11 @@ impl Mu1603 {
                 Ok(rlen) => {
                     let chunk_elapsed = chunk_start.elapsed();
                     loop_total += chunk_elapsed;
-                    println!("got {} bytes, took {:?}", rlen, chunk_elapsed);
-                    println!("{:?}", chunk[0..0x40].hex_dump());
+
+                    // NOTE: You can uncomment this if you'd like to peek 
+                    // at the incoming packets. 
+                    //println!("got {} bytes, took {:?}", rlen, chunk_elapsed);
+                    //println!("{:?}", chunk[0..0x40].hex_dump());
 
                     // If the incoming data would overflow the buffer,
                     // just truncate it and copy the remaining bytes
