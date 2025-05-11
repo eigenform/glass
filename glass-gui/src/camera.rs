@@ -10,6 +10,7 @@ use rand::prelude::*;
 use glass_common::*;
 use bayer;
 
+/// Spawn the camera thread and return a handle. 
 pub fn spawn_camera_thread(chan: CameraThreadChannels, rgb_data: Arc<RwLock<PixelData>>)
     -> std::thread::JoinHandle<Result<(), CameraThreadError>>
 {

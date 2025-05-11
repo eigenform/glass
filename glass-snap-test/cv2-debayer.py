@@ -13,10 +13,10 @@ if len(argv) < 2:
 with open(argv[1], "rb") as f:
     data = f.read()
 
-# 8-bit RGGB
+# 8-bit RGGB (Bayer pattern)
 arr = np.frombuffer(data, dtype=np.dtype(np.uint8))
-#arr.shape = (2320, 1740)
 arr.shape = (1740, 2320, 1)
+#arr.shape = (3488, 4632, 1)
 print(arr)
 
 #colimg = cv2.cvtColor(arr, cv2.COLOR_BAYER_BGGR2RGB)

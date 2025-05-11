@@ -12,6 +12,9 @@ use std::sync::{Arc, RwLock};
 use glass_common::*;
 
 fn main() -> Result<(), eframe::Error> {
+
+    // NOTE: This default size for the viewport is for my big 4K displays.
+
     //env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()

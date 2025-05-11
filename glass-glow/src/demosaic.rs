@@ -3,6 +3,27 @@ use glow;
 use glow::HasContext;
 use crate::*;
 
+/// OpenGL program used to recover an RGB image from raw sensor data. 
+///
+/// As far as I can tell, the situation is something like this: 
+///
+/// - Your image sensor has a "Bayer filter", where each pixel of the 
+///   output only represents the intensity of *a single color*
+/// - The pattern on your sensor is probably "RGGB" 
+/// - We have to use some kind of algorithm (a "debayering" or "demosaicing" 
+///   algorithm) to recover the full RGB values for each pixel
+///
+/// Since we want to have a responsive "preview" of the image from the sensor,
+/// we want to do this on GPU (and avoid using the CPU because it's slow). 
+/// On top of that, we also want the ability to read the resulting image 
+/// back into RAM (in order to "acquire" images and save them to disk). 
+///
+/// We need the process to look something like this: 
+///
+/// - Upload the raw bayer image from RAM to the GPU
+/// - Apply the shader to the image
+/// - Read the resulting image back to RAM
+///
 pub struct DemosaicQuad {
     program: Option<glow::Program>,
     vao: Option<glow::VertexArray>,

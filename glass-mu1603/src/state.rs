@@ -171,8 +171,6 @@ pub struct Mu1603State {
     pub analog_gain: AnalogGain,
     pub bitdepth: Mu1603BitDepth,
 }
-impl Mu1603State {
-}
 
 impl Mu1603State {
     pub fn exposure_ms(&self) -> usize { 

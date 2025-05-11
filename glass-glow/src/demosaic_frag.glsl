@@ -40,7 +40,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // Monochrome RGBA or GL_LUMINANCE Bayer encoded texture.
 uniform sampler2D source;
+
+// Write 'frag_color' to the first buffer (render target 0)
 layout(location = 0) out vec4 frag_color;
+
 in vec4 center;
 in vec4 yCoord;
 in vec4 xCoord;

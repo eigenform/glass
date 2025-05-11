@@ -5,6 +5,7 @@ use eframe::{
 
 use std::sync::{ Arc, RwLock, Mutex };
 use std::sync::mpsc::{ Sender, Receiver, SendError, TryRecvError };
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::*;
 
 use crate::log::*;
@@ -49,21 +50,19 @@ pub struct MyApp {
 
     req_settings: RequestedSettings,
 
+    /// State associated with the preview window
     preview_glow: PreviewGlow,
 
     acquire_data: Arc<RwLock<PixelData>>,
-    acquire_pending: bool,
+    acquire_pending: Arc<AtomicBool>,
+    acquire_filename: String,
 
-    angle: f32,
-    //rotating_triangle: Arc<Mutex<RotatingTriangle>>,
 }
 impl MyApp {
     pub fn new(cc: &eframe::CreationContext<'_>, chan: EguiThreadChannels,
         rgb_data: Arc<RwLock<PixelData>>,
     ) -> Self 
     { 
-        //let mut f = std::fs::File::open("/tmp/wow.rgb16.tif").unwrap();
-
         // Adjust text size so I don't have to scale up the DPI
         let ctx = &cc.egui_ctx;
         use egui::FontFamily::{ Monospace, Proportional };
@@ -77,14 +76,15 @@ impl MyApp {
         ].into();
         ctx.set_style(style);
 
-        // State for glow usage via paint callbacks
-        let gl = cc.gl.as_ref().expect("No glow backend?");
+        //// State for glow usage via paint callbacks
+        //let gl = cc.gl.as_ref().expect("No glow backend?");
 
         // FIXME: This needs to match the dimensions of 'rgb_data'
         let acquire_data = Arc::new(RwLock::new(PixelData::new(
             PixelFormat::RGB8, 2320, 1740
         )));
         let acquire_data_clone = acquire_data.clone();
+        let acquire_pending = Arc::new(AtomicBool::new(false));
 
 
         Self {
@@ -92,10 +92,10 @@ impl MyApp {
             req_settings: RequestedSettings::default(),
             log_entries: VecDeque::new(),
             cam_state: None,
-            angle: 0.0,
-            preview_glow: PreviewGlow::new(rgb_data, acquire_data_clone),
+            preview_glow: PreviewGlow::new(rgb_data, acquire_data_clone, acquire_pending.clone()),
             acquire_data,
-            acquire_pending: false,
+            acquire_pending,
+            acquire_filename: String::new(),
         }
     }
 
@@ -112,46 +112,12 @@ impl MyApp {
 
 impl MyApp {
 
-    fn draw_viewport(&mut self, ui: &mut egui::Ui) {
+    fn draw_preview(&mut self, ui: &mut egui::Ui) {
         let (rect, _) = ui.allocate_exact_size(
             egui::Vec2::new(2320.0, 1740.0), egui::Sense::hover()
             //egui::Vec2::new(1780.0, 1335.0), egui::Sense::hover()
         );
         ui.painter().add(self.preview_glow.get_paint_callback(rect));
-
-
-        //let callback = egui::PaintCallback {
-        //    rect, callback: Arc::new(egui_glow::CallbackFn::new(
-        //        move |info, painter| {
-        //            self.preview_glow.paint(info, painter.gl());
-
-        //        }
-        //    )),
-        //};
-
-
-
-        //let (rect, response) = ui.allocate_exact_size(
-        //    //egui::Vec2::splat(300.0), egui::Sense::drag()
-        //    egui::Vec2::new(1920.0, 1080.0), egui::Sense::drag()
-        //);
-        //self.angle += response.drag_delta().x * 0.01;
-        //// Clone locals so we can move them into the paint callback:
-        //let angle = self.angle;
-        //let rotating_triangle = self.rotating_triangle.clone();
-        //let callback = egui::PaintCallback {
-        //    rect,
-        //    callback: Arc::new(egui_glow::CallbackFn::new(
-        //        move |_info, painter| {
-        //            rotating_triangle
-        //                .lock()
-        //                .unwrap()
-        //                .paint(painter.gl(), angle);
-        //        }
-        //    )),
-        //};
-        //ui.painter().add(callback);
-
     }
 }
 
@@ -333,6 +299,8 @@ impl MyApp {
     }
 
     pub fn draw_acquisition_control(&mut self, ui: &mut egui::Ui) {
+        use chrono;
+
         let camera_connected = self.camera_connected();
         ui.heading("Acquisition");
         ui.vertical_centered(|ui| { 
@@ -342,11 +310,17 @@ impl MyApp {
             let snap_button_resp  = 
                 //ui.add_enabled(camera_connected, snap_button);
                 ui.add_enabled(true, snap_button);
+
+
+
             if snap_button_resp.enabled() && snap_button_resp.clicked() {
                 self.push_log(LogEvent::Acquire);
                 snap_button_resp.highlight();
+                let time = chrono::Local::now();
 
-                self.acquire_pending = true;
+                self.acquire_filename = format!("/tmp/{}.rgb8.raw", time.format("%d%m%Y-%H%M-%S"));
+                self.acquire_pending.store(true, Ordering::Relaxed);
+
                 // FIXME: No idea if this works, lol
                 //ui.painter().add(
                 //    self.preview_glow.get_acquire_callback(egui::Rect::ZERO)
@@ -383,12 +357,9 @@ impl eframe::App for MyApp {
 
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
         if let Some(gl) = gl {
-            //self.rotating_triangle.lock().unwrap().destroy(gl);
             self.preview_glow.destroy(gl);
         }
-
         self.chan.ctl_tx.send(ControlMessage::Shutdown).unwrap();
-
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -401,13 +372,18 @@ impl eframe::App for MyApp {
         self.check_camera_thread();
 
         // FIXME: This is fine for *testing* acquisition, for now
-        if self.acquire_pending { 
+        if self.acquire_pending.load(Ordering::Relaxed) { 
             use std::io::Write;
+            println!("pending {}", self.acquire_filename);
+
             if let Ok(acquire_data) = self.acquire_data.read() {
-                let mut f = std::fs::File::create("/tmp/wow.rgb8.raw").unwrap();
+                let mut f = std::fs::File::create(&self.acquire_filename).unwrap();
                 f.write_all(&acquire_data.data).unwrap();
+                self.acquire_pending.store(false, Ordering::Relaxed);
+                println!("wrote {}", self.acquire_filename);
+            } else { 
+                println!("waiting {}", self.acquire_filename);
             }
-            self.acquire_pending = false;
         }
 
         // Draw the control panel on the left side panel
@@ -436,39 +412,11 @@ impl eframe::App for MyApp {
         // Draw the current preview frame in the central panel
         egui::CentralPanel::default().show(ctx, |viewport| 
         {
-
             viewport.vertical_centered(|ui| {
-                self.draw_viewport(ui);
-                //ui.add(preview_img);
+                self.draw_preview(ui);
             });
-
-            //self.custom_painting(viewport);
-            //egui::Frame::canvas(viewport.style()).show(viewport, |ui| {
-            //    self.custom_painting(ui);
-            //});
-
-
-            // Plot usage
-            //let plot = egui_plot::Plot::new("demo")
-            //    .allow_zoom(true);
-            //let ex_colorimage = egui::ColorImage::example();
-            //let img_w = ex_colorimage.width() as f32;
-            //let img_h = ex_colorimage.height() as f32;
-            //let texture = ctx.load_texture("foo", ex_colorimage, 
-            //    egui::TextureOptions::default());
-            //let img = egui_plot::PlotImage::new(
-            //    &texture,
-            //    egui_plot::PlotPoint::new(0.0, 0.0),
-            //    egui::vec2(texture.aspect_ratio(), 1.0)
-            //);
-            //let plot_resp = plot.show(viewport, |ui| {
-            //    ui.image(img);
-            //});
-
         });
-
     }
-
 }
 
 
