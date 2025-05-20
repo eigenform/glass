@@ -66,11 +66,15 @@ void main(void) {
     center.zw = tex_coords * sourceSize.xy + firstRed;
 
     vec2 invSize = sourceSize.zw;
-	vec4 offsets = vec4(
+	vec4 x_offsets = vec4(
 		-2.0 * invSize.x, -invSize.x, invSize.x, 2.0 * invSize.x
 	);
-    xCoord = center.x + offsets;
-    yCoord = center.y + offsets;
+	vec4 y_offsets = vec4(
+		-2.0 * invSize.y, -invSize.y, invSize.y, 2.0 * invSize.y
+	);
+
+    xCoord = center.x + x_offsets;
+    yCoord = center.y + y_offsets;
 
     gl_Position = vec4(position, 0.0, 1.0);
 }
