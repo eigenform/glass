@@ -11,6 +11,7 @@ use std::collections::*;
 use crate::log::*;
 use crate::glow::*;
 use crate::ipc::*;
+use crate::acquire::*;
 use glass_mu1603::*;
 use glass_common::*;
 
@@ -37,8 +38,6 @@ impl Default for RequestedSettings {
 }
 
 pub struct MyApp {
-    //settings: Settings,
-
     // Channels used to communicate with the camera thread
     chan: EguiThreadChannels,
 
@@ -46,16 +45,22 @@ pub struct MyApp {
     log_entries: VecDeque<LogEntry>,
 
     /// The current state of the camera.
-    cam_state: Option<Mu1603State>,
+    cam_options: Option<Mu1603Options>,
 
+    /// Reflecting the state of requested camera settings [shown in the UI]
     req_settings: RequestedSettings,
 
     /// State associated with the preview window
     preview_glow: PreviewGlow,
 
+    /// State associated with image acquisition
+    acquire: AcquisitionState,
+
+    // FIXME: Replace use of these with 'acquire'
+    /// Container for a demosaiced image acquired from the renderer
     acquire_data: Arc<RwLock<PixelData>>,
+    /// Used to acquire an image from the renderer
     acquire_pending: Arc<AtomicBool>,
-    acquire_filename: String,
 
 }
 impl MyApp {
@@ -80,27 +85,34 @@ impl MyApp {
         //let gl = cc.gl.as_ref().expect("No glow backend?");
 
         // FIXME: This needs to match the dimensions of 'rgb_data'
+        // FIXME: Replace these with [AcquisitionState]
         let acquire_data = Arc::new(RwLock::new(PixelData::new(
-            PixelFormat::RGB8, 2320, 1740
+            PixelFormat::RGB8, 
+            Mu1603Mode::Mode1.width(), 
+            Mu1603Mode::Mode1.height()
         )));
         let acquire_data_clone = acquire_data.clone();
         let acquire_pending = Arc::new(AtomicBool::new(false));
-
 
         Self {
             chan,
             req_settings: RequestedSettings::default(),
             log_entries: VecDeque::new(),
-            cam_state: None,
+            cam_options: None,
             preview_glow: PreviewGlow::new(rgb_data, acquire_data_clone, acquire_pending.clone()),
+            acquire: AcquisitionState::new(
+                PixelFormat::RGB8, 
+                Mu1603Mode::Mode1.width(),
+                Mu1603Mode::Mode1.height(),
+            ),
+            // FIXME: Replace these with [AcquisitionState]
             acquire_data,
             acquire_pending,
-            acquire_filename: String::new(),
         }
     }
 
     pub fn camera_connected(&self) -> bool {
-        self.cam_state.is_some()
+        self.cam_options.is_some()
     }
 
     pub fn push_log(&mut self, evt: LogEvent) {
@@ -110,25 +122,32 @@ impl MyApp {
 }
 
 
+/// Interactions with other threads
 impl MyApp {
 
-    fn draw_preview(&mut self, ui: &mut egui::Ui) {
-        let (rect, _) = ui.allocate_exact_size(
-            egui::Vec2::new(2320.0, 1740.0), egui::Sense::hover()
-            //egui::Vec2::new(1780.0, 1335.0), egui::Sense::hover()
-        );
-        ui.painter().add(self.preview_glow.get_paint_callback(rect));
+    // FIXME: This is fine for *testing* acquisition, for now.
+    //
+    // FIXME: What if we never acquire the read lock? :x
+    //
+    // FIXME: Maybe you should do this in a different thread?
+    //        Right now, we're just doing it in the egui thread.
+    //
+    pub fn check_acquisition_thread(&mut self) {
+        if self.acquire_pending.load(Ordering::Relaxed) { 
+            use std::io::Write;
+            if let Ok(acquire_data) = self.acquire_data.read() {
+                let filename = self.acquire.next_filename();
+                let mut f = std::fs::File::create(&filename).unwrap();
+                f.write_all(&acquire_data.data).unwrap();
+                self.acquire_pending.store(false, Ordering::Relaxed);
+                println!("wrote {}", filename);
+            }
+        }
     }
-}
 
-/// Interactions with the camera thread
-impl MyApp {
-    pub fn cfa_to_rgb(&mut self, ) {
-    }
-
+    // FIXME: Both of these only consume at most *one* message.
+    //        Are there any cases where we might want to handle many at once?
     pub fn check_camera_thread(&mut self) {
-        // NOTE: Both of these only consume at most *one* message.
-        // Are there any cases where we might want to handle many at once?
 
         // Receive frames from the camera thread.
         match self.chan.frame_rx.try_recv() {
@@ -149,25 +168,27 @@ impl MyApp {
             Ok(msg) => {
                 self.push_log(LogEvent::CameraMsg(msg));
                 match msg { 
-                    CameraMessage::Connected => {
+                    CameraMessage::Connected(state) => {
+                        self.cam_options = Some(state);
                     },
                     CameraMessage::Disconnected => {
+                        self.cam_options = None;
                     },
-                    CameraMessage::ThreadInit => {
-                    },
-                    CameraMessage::StartStreaming => {
-                    },
-                    CameraMessage::UpdateAck(state) => {
-                    },
+                    CameraMessage::ThreadInit => {},
+                    CameraMessage::StartStreaming => {},
+                    CameraMessage::UpdateAck(state) => {},
                     CameraMessage::ConnectFailure(e) => {
+                        println!("connect failure: {:?}", e);
+                        self.cam_options = None;
                     },
                     CameraMessage::Debug(msg) => {
+                        println!("{}", msg);
                     }
                 }
             },
-            Err(TryRecvError::Empty) => {
-            },
+            Err(TryRecvError::Empty) => {},
             Err(TryRecvError::Disconnected) => {
+                self.cam_options = None;
                 self.log_entries.push_back(
                     LogEntry::new(LogEvent::LostThread)
                 );
@@ -206,9 +227,9 @@ impl MyApp {
 
             if connect_button_resp.clicked() {
                 if !camera_connected {
-                    self.chan.send_connect_request();
+                    self.chan.send_connect_request().unwrap();
                 } else {
-                    self.chan.send_disconnect_request();
+                    self.chan.send_disconnect_request().unwrap();
                 }
             }
         });
@@ -218,9 +239,7 @@ impl MyApp {
     pub fn draw_settings_control(&mut self, ui: &mut egui::Ui)
     {
         let camera_connected = self.camera_connected();
-        let (gain_desync, exp_desync, mode_desync) = 
-            if let Some(state) = self.cam_state 
-        {
+        let (gain_desync, exp_desync, mode_desync) = if let Some(state) = self.cam_options {
             (state.analog_gain_percent() != self.req_settings.analog_gain_percent,
              state.exposure_ms() != self.req_settings.exposure_ms,
              state.mode != self.req_settings.mode)
@@ -307,24 +326,12 @@ impl MyApp {
             let snap_button = egui::Button::new("Acquire")
                 .min_size([100.0,50.0].into());
 
-            let snap_button_resp  = 
-                //ui.add_enabled(camera_connected, snap_button);
-                ui.add_enabled(true, snap_button);
-
-
+            let snap_button_resp = ui.add_enabled(camera_connected, snap_button);
 
             if snap_button_resp.enabled() && snap_button_resp.clicked() {
-                self.push_log(LogEvent::Acquire);
                 snap_button_resp.highlight();
-                let time = chrono::Local::now();
-
-                self.acquire_filename = format!("/tmp/{}.rgb8.raw", time.format("%d%m%Y-%H%M-%S"));
+                self.push_log(LogEvent::Acquire);
                 self.acquire_pending.store(true, Ordering::Relaxed);
-
-                // FIXME: No idea if this works, lol
-                //ui.painter().add(
-                //    self.preview_glow.get_acquire_callback(egui::Rect::ZERO)
-                //);
             }
         });
         ui.separator();
@@ -349,43 +356,19 @@ impl MyApp {
         ui.add_space(10.0);
     }
 
-}
-
-
-
-impl eframe::App for MyApp {
-
-    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
-        if let Some(gl) = gl {
-            self.preview_glow.destroy(gl);
-        }
-        self.chan.ctl_tx.send(ControlMessage::Shutdown).unwrap();
+    pub fn draw_preview(&mut self, ui: &mut egui::Ui) {
+        let (rect, _) = ui.allocate_exact_size(
+            egui::Vec2::new(
+                Mu1603Mode::Mode1.width() as f32, 
+                Mu1603Mode::Mode1.height() as f32
+            ), 
+            egui::Sense::hover()
+        );
+        // Use the 'glow' renderer to actually draw the contents
+        ui.painter().add(self.preview_glow.get_paint_callback(rect));
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-
-        // Explicitly repaint on each frame. 
-        // We expect to be ingesting preview updates constantly. 
-        ctx.request_repaint();
-
-        // Handle pending messages from the camera thread
-        self.check_camera_thread();
-
-        // FIXME: This is fine for *testing* acquisition, for now
-        if self.acquire_pending.load(Ordering::Relaxed) { 
-            use std::io::Write;
-            println!("pending {}", self.acquire_filename);
-
-            if let Ok(acquire_data) = self.acquire_data.read() {
-                let mut f = std::fs::File::create(&self.acquire_filename).unwrap();
-                f.write_all(&acquire_data.data).unwrap();
-                self.acquire_pending.store(false, Ordering::Relaxed);
-                println!("wrote {}", self.acquire_filename);
-            } else { 
-                println!("waiting {}", self.acquire_filename);
-            }
-        }
-
+    pub fn draw_ui(&mut self, ctx: &egui::Context) {
         // Draw the control panel on the left side panel
         egui::SidePanel::left("Control Panel").show(ctx, |panel| 
         {
@@ -401,7 +384,6 @@ impl eframe::App for MyApp {
             panel.monospace(format!("egui frame: {:010}", ctx.frame_nr()));
 
         });
-
         // Draw the log on the bottom panel
         egui::TopBottomPanel::bottom("Log").show(ctx, |log| 
         {
@@ -419,4 +401,29 @@ impl eframe::App for MyApp {
     }
 }
 
+
+impl eframe::App for MyApp {
+    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
+        if let Some(gl) = gl {
+            self.preview_glow.destroy(gl);
+        }
+        self.chan.ctl_tx.send(ControlMessage::Shutdown).unwrap();
+    }
+
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+
+        // Explicitly repaint on each frame. 
+        // We expect to be ingesting preview updates constantly. 
+        ctx.request_repaint();
+
+        // Handle pending messages from the camera thread
+        self.check_camera_thread();
+
+        // Handle pending messages from the acquisition thread
+        self.check_acquisition_thread();
+
+        // Draw the UI
+        self.draw_ui(ctx);
+    }
+}
 

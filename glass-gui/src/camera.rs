@@ -27,13 +27,21 @@ pub enum CameraThreadError {
     Terminated,
 }
 
+/// State associated with the camera thread. 
 pub struct CameraThreadState {
+    /// libusb context
     ctx: Context,
+
+    /// Channels for communicating with the egui thread
     chan: CameraThreadChannels,
+
     dummy: bool,
     streaming: bool,
+
+    /// Object used to control the camera
     cam: Option<Mu1603>,
 
+    /// Pointer to resulting pixel data from the camera
     rgb_data: Arc<RwLock<PixelData>>,
 
 }
@@ -75,18 +83,13 @@ impl CameraThreadState {
 
 
 impl CameraThreadState {
+
     pub fn main_loop(&mut self) -> Result<(), CameraThreadError> 
     {
-        let mut iter: usize = 0;
         self.chan.send_state_update(CameraMessage::ThreadInit);
         'top: loop 
         { 
-            iter += 1;
             match self.chan.ctl_rx.try_recv() {
-                // No message, nothing for us to do
-                Err(TryRecvError::Empty) => {
-                    std::thread::sleep(Duration::from_millis(1));
-                },
                 // Handle a message from the egui thread
                 Ok(msg) => {
                     let res = self.handle_msg(msg);
@@ -97,6 +100,10 @@ impl CameraThreadState {
                         Err(e) => return Err(e),
                     }
                 },
+                // No message, nothing for us to do
+                Err(TryRecvError::Empty) => {
+                    std::thread::sleep(Duration::from_millis(1));
+                },
                 // Channel disconnected, guess I'll die ¯\_(ツ)_/¯
                 Err(TryRecvError::Disconnected) => {
                     println!("disconnected");
@@ -104,21 +111,20 @@ impl CameraThreadState {
                 },
             }
 
-            //self.simulate_frame_write(iter);
-
+            // When the camera is connected, try to read a frame
             if let Some(cam) = &mut self.cam {
                 match cam.try_read_frame() {
                     Ok(data) => {
-                        //self.chan.send_frame_update(data);
+                        // Acquire lock and write the data for this frame
                         if let Ok(mut lock) = self.rgb_data.try_write() {
                             if let Err(e) = lock.fill_from_slice(&data) { 
                                 println!("{}", e);
                             } else { 
                                 lock.increment_frame_id();
                             }
-                        } else { 
+                        } 
+                        else { 
                             println!("try_write failed");
-
                         }
                     },
                     Err(e) => { 
@@ -126,10 +132,8 @@ impl CameraThreadState {
                             Mu1603Error::NotStreaming => {
                                 std::thread::sleep(Duration::from_millis(1));
                             },
-                            Mu1603Error::Rusb(re) => {
-                            },
-                            Mu1603Error::FirstFrame => {
-                            },
+                            Mu1603Error::Rusb(re) => {},
+                            Mu1603Error::FirstFrame => {},
                             Mu1603Error::Unimplemented => {
                                 unreachable!();
                             },
@@ -146,6 +150,8 @@ impl CameraThreadState {
 }
 
 impl CameraThreadState {
+
+    /// Handle a request to connect to the camera. 
     pub fn handle_connect(&mut self) -> Result<(), CameraThreadError> {
         // Ignore this message if we're already connected. 
         if self.is_connected() {
@@ -155,9 +161,9 @@ impl CameraThreadState {
         // Try to connect to the camera
         let resp = match Mu1603::try_open(&mut self.ctx) { 
             Ok(mut cam) => {
-                cam.start_stream(Mu1603Mode::Mode1).unwrap();
+                let state = cam.start_stream(Mu1603Mode::Mode1).unwrap();
                 self.cam = Some(cam);
-                CameraMessage::Connected
+                CameraMessage::Connected(state)
             },
             Err(e) => CameraMessage::ConnectFailure(e),
         };
@@ -165,6 +171,8 @@ impl CameraThreadState {
         self.chan.send_state_update(resp);
         Ok(())
     }
+
+    /// Handle a request to disconnect from the camera. 
     pub fn handle_disconnect(&mut self) -> Result<(), CameraThreadError> 
     {
         if let Some(ref mut cam) = &mut self.cam {
@@ -173,13 +181,15 @@ impl CameraThreadState {
         Ok(())
     }
 
-    pub fn handle_update(&mut self, state: Mu1603State) 
+    /// Handle a request to update camera settings.
+    pub fn handle_update(&mut self, state: Mu1603Options) 
         -> Result<(), CameraThreadError> 
     {
         println!("got upd msg {:?}", state);
         Ok(())
     }
 
+    /// Handle a message from the egui thread. 
     pub fn handle_msg(&mut self, msg: ControlMessage) 
         -> Result<(), CameraThreadError>
     {

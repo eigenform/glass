@@ -14,7 +14,7 @@ pub struct PreviewGlow {
     pub preview: Arc<Mutex<Preview>>,
 
     paint_callback: Arc<eframe::egui_glow::CallbackFn>,
-    acquire_callback: Arc<eframe::egui_glow::CallbackFn>,
+    //acquire_callback: Arc<eframe::egui_glow::CallbackFn>,
 }
 impl PreviewGlow {
     pub fn new(
@@ -35,19 +35,19 @@ impl PreviewGlow {
             })
         });
 
-        let p: Arc<Mutex<Preview>> = preview.clone();
-        let acquire_callback = Arc::new({
-            eframe::egui_glow::CallbackFn::new(move |info, painter| 
-            {
-                p.lock().unwrap().acquire(info, painter)
-            })
-        });
+        //let p: Arc<Mutex<Preview>> = preview.clone();
+        //let acquire_callback = Arc::new({
+        //    eframe::egui_glow::CallbackFn::new(move |info, painter| 
+        //    {
+        //        p.lock().unwrap().acquire(info, painter)
+        //    })
+        //});
 
 
         Self { 
             preview,
             paint_callback,
-            acquire_callback,
+            //acquire_callback,
         }
     }
 
@@ -57,11 +57,11 @@ impl PreviewGlow {
         egui::PaintCallback { rect, callback: self.paint_callback.clone() }
     }
 
-    pub fn get_acquire_callback(&mut self, rect: egui::Rect)
-        -> egui::PaintCallback 
-    {
-        egui::PaintCallback { rect, callback: self.acquire_callback.clone() }
-    }
+    //pub fn get_acquire_callback(&mut self, rect: egui::Rect)
+    //    -> egui::PaintCallback 
+    //{
+    //    egui::PaintCallback { rect, callback: self.acquire_callback.clone() }
+    //}
 
 
 
@@ -71,6 +71,7 @@ impl PreviewGlow {
 }
 
 
+/// Object used to control the shader
 pub struct Preview {
     /// Shader used to demosaic raw data from the sensor
     program: DemosaicQuad,
@@ -94,7 +95,7 @@ impl Preview {
         let h = raw_data.read().unwrap().height();
         let format = raw_data.read().unwrap().format();
         Self { 
-            program: DemosaicQuad::new(w, h),
+            program: DemosaicQuad::new(w, h, acquire_data.clone()),
             last_frame: PixelData::new(format, w, h),
             acquire_data,
             acquire_pending,
@@ -104,31 +105,6 @@ impl Preview {
 
     pub fn destroy(&mut self, gl: &eframe::glow::Context) {
         self.program.destroy(&gl);
-    }
-
-    /// Acquire an image
-    pub fn acquire(&mut self, 
-        _info: eframe::egui::PaintCallbackInfo, 
-        painter: &eframe::egui_glow::Painter
-    ) 
-    {
-        let gl = painter.gl();
-        if !self.program.is_initialized() {
-            return;
-        }
-
-        if let Ok(mut data) = self.acquire_data.write() {
-            unsafe { 
-                //gl.bind_texture(glow::TEXTURE_2D, self.program.texture);
-
-                gl.get_tex_image(glow::TEXTURE_2D, 0, glow::RGB, 
-                    glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(&mut data.data)
-                );
-            }
-            data.increment_frame_id();
-            println!("acquired image?");
-        }
-
     }
 
     /// Update the preview window
@@ -156,39 +132,17 @@ impl Preview {
         }
 
         // Upload new data to the texture and actually run the shader
-        self.program.update_texture(&gl, &self.last_frame.data);
+        self.program.update_input_texture(&gl, &self.last_frame.data);
+        //self.program.clear_output_texture(&gl);
         self.program.paint(&gl);
 
         if !self.acquire_pending.load(Ordering::Relaxed) {
             return;
+        } 
+        else { 
+            println!("calling paint_to_fbo");
+            self.program.paint_to_fbo(&gl, &self.last_frame.data);
         }
-        if let Ok(mut data) = self.acquire_data.write() {
-            unsafe { 
-
-                // NOTE: This is straight up reading the framebuffer (including the ui!).
-                // You probably want to like, create a different framebuffer object and
-                // render into it, then read from it like this?
-                //gl.read_pixels(0, 0, 2320, 1740, glow::RGB, glow::UNSIGNED_BYTE, 
-                //    glow::PixelPackData::Slice(&mut data.data));
-
-                //gl.active_texture(glow::TEXTURE0);
-                //gl.bind_texture(glow::TEXTURE_RECTANGLE, self.program.texture);
-                //gl.get_tex_image(glow::TEXTURE_2D, 0, glow::RED, 
-                //    glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(&mut data.data)
-                //);
-
-                // NOTE: It seems like this returns RGB8, but only the blue pixels have values??
-                // This might be reading the original texture (not the newly-rendered image)
-                gl.get_tex_image(glow::TEXTURE_2D, 0, glow::RGB, 
-                    glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(&mut data.data)
-                );
-
-            }
-            data.increment_frame_id();
-            //println!("acquired image?");
-        }
-
-
     }
 }
 

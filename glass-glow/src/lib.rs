@@ -6,7 +6,7 @@ use glow;
 use glow::HasContext;
 use glass_common::*;
 
-#[repr(C)]
+#[repr(C, packed)]
 pub struct Vertex {
     /// Position X (range [-1,1])
     pub x: f32,
@@ -19,6 +19,13 @@ pub struct Vertex {
 
     /// Texture Y (range [0,1])
     pub v: f32
+}
+
+pub struct Fbo {
+    pub fb: glow::Framebuffer,
+    pub width: usize,
+    pub height: usize,
+    pub tex: glow::Texture,
 }
 
 pub trait GlowProgram {
@@ -126,6 +133,7 @@ impl GlowHelper {
             glow::TEXTURE_MAG_FILTER,
             glow::NEAREST as _,
         );
+        //gl.bind_texture(glow::TEXTURE_2D, None);
         Ok(texture)
     }
 }

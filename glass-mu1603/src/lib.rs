@@ -27,8 +27,8 @@ impl From<rusb::Error> for Mu1603Error {
 pub struct Mu1603 {
     /// libusb handle to the device
     handle: DeviceHandle<Context>,
-    state: Option<Mu1603State>,
-    prev_state: Option<Mu1603State>,
+    state: Option<Mu1603Options>,
+    prev_state: Option<Mu1603Options>,
 }
 impl Mu1603 {
     /// USB Vendor ID
@@ -52,9 +52,12 @@ impl Mu1603 {
         Direction::Out, RequestType::Vendor, Recipient::Device
     );
 
-    pub fn state(&self) -> Option<Mu1603State> {
+    /// Get the current stream settings. 
+    pub fn state(&self) -> Option<Mu1603Options> {
         self.state
     }
+
+    /// Return 'true' if the camera is currently streaming
     pub fn is_streaming(&self) -> bool {
         self.state.is_some()
     }
@@ -80,7 +83,7 @@ impl Mu1603 {
 }
 
 impl Mu1603 {
-    pub fn apply_state(&mut self, next_state: Mu1603State) 
+    pub fn apply_state(&mut self, next_state: Mu1603Options) 
     {
         if let Some(this_state) = self.state {
             if this_state.mode() != next_state.mode() {
@@ -140,10 +143,11 @@ impl Mu1603 {
 
 
     pub fn start_stream(&mut self, init_mode: Mu1603Mode) 
-        -> Result<(), Mu1603Error>
+        -> Result<Mu1603Options, Mu1603Error>
     {
-        if self.is_streaming() {
-            return Ok(());
+        // We're already streaming
+        if let Some(state) = self.state {
+            return Ok(self.state().unwrap());
         }
 
         // 1. Send the key `0x0000` to the device. 
@@ -229,17 +233,17 @@ impl Mu1603 {
         self.ven_write(0x01, 0x000f, 0x0003, &[])?;
         std::thread::sleep(Duration::from_millis(10));
 
-        let state = Mu1603State {
+        let state = Mu1603Options {
             id: 0,
             mode: init_mode,
             analog_gain: AnalogGain::new_from_percent(100),
             exposure: ExposureTime::new_from_us(94_000),
             bitdepth: Mu1603BitDepth::Depth8,
         };
+
         self.state = Some(state);
         println!("[*] Driver started streaming");
-
-        Ok(())
+        Ok(state)
     }
 
     /// Stop streaming data.
@@ -267,6 +271,7 @@ impl Mu1603 {
 
 
 impl Mu1603 {
+    /// Try to read a frame from the camera. 
     pub fn try_read_frame(&mut self) -> Result<Vec<u8>, Mu1603Error>
     {
         if let Some(state) = self.state { 
@@ -276,33 +281,23 @@ impl Mu1603 {
         }
     }
 
-    fn read_frame(handle: &mut DeviceHandle<Context>, state: &Mu1603State)
+    /// Read an entire frame from the camera. 
+    fn read_frame(handle: &mut DeviceHandle<Context>, state: &Mu1603Options)
         -> Result<Vec<u8>, Mu1603Error>
     {
         const CHUNK: usize = 0x0010_0000;
-        let timeout = Duration::from_millis(500);
         let (width, height) = state.mode.dimensions();
         let bpp = state.bitdepth.bpp();
         let frame_len = (width * height) * bpp;
+
         let mut data = vec![0u8; frame_len];
         let mut chunk = vec![0u8; CHUNK];
+        let mut cur  = 0;
 
         // Issue bulk reads until we've received an entire frame
-        let mut cur  = 0;
-        let start = std::time::Instant::now();
-        let mut loop_total = std::time::Duration::new(0, 0);
         loop {
-            let chunk_start = std::time::Instant::now();
-            match handle.read_bulk(0x81, &mut chunk, timeout) {
+            match handle.read_bulk(0x81, &mut chunk, Duration::from_millis(500)) {
                 Ok(rlen) => {
-                    let chunk_elapsed = chunk_start.elapsed();
-                    loop_total += chunk_elapsed;
-
-                    // NOTE: You can uncomment this if you'd like to peek 
-                    // at the incoming packets. 
-                    //println!("got {} bytes, took {:?}", rlen, chunk_elapsed);
-                    //println!("{:?}", chunk[0..0x40].hex_dump());
-
                     // If the incoming data would overflow the buffer,
                     // just truncate it and copy the remaining bytes
                     let rem = frame_len - cur;
@@ -314,13 +309,13 @@ impl Mu1603 {
 
                     // If we get less bytes than we requested, this indicates
                     // that the device has finished reading out a frame.
-                    if rlen < CHUNK { break; }
+                    if rlen < CHUNK { 
+                        break; 
+                    }
                 },
                 Err(e) => return Err(Mu1603Error::from(e)),
             }
         }
-        let elapsed = start.elapsed();
-        println!("bulk read total {:?}", loop_total);
 
         // This really only occurs on the first frame after initialization; 
         // the data is typically truncated, and we can just discard it.
@@ -329,46 +324,6 @@ impl Mu1603 {
         } else {
             Ok(data)
         }
-
-
-        //let mut rem = frame_len;
-        //let mut cur = 0;
-        //while cur < frame_len {
-        //    match handle.read_bulk(0x81, &mut chunk, timeout) {
-        //        Ok(recv_len) => {
-        //            println!("[*] Got {} bytes", recv_len);
-        //            println!("{:?}", chunk[0..0x40].hex_dump());
-        //            let copy_len = if recv_len > rem {
-        //                println!("  Truncated received length {} to {}", 
-        //                    recv_len, rem
-        //                );
-        //                rem
-        //            } else { 
-        //                recv_len
-        //            };
-        //            cur = cur + recv_len;
-        //            rem = rem - recv_len; 
-        //            let start = cur; 
-        //            let end   = cur + recv_len; 
-        //            let dst = &mut data[start..end];
-        //            dst.copy_from_slice(&chunk[..recv_len]);
-        //            if (recv_len < CHUNK) && cur < frame_len {
-        //                break;
-        //            }
-        //            if end > frame_len {
-        //                println!("{} would overflow frame {}? ", end, frame_len);
-        //                return Err(Mu1603Error::FirstFrame);
-        //            }
-        //            cur += recv_len;
-        //        },
-        //        Err(e) => { return Err(Mu1603Error::from(e)); },
-        //    }
-        //}
-        //if cur < frame_len { return Err(Mu1603Error::FirstFrame); }
-        //println!();
-
-        //Ok(data)
-
     }
 
 }

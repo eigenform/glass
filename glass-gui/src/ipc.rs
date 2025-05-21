@@ -12,7 +12,7 @@ pub enum ControlMessage {
     //AnalogGain(usize),
 
     /// Update camera settings
-    Update(Mu1603State),
+    Update(Mu1603Options),
 
     /// Connect to the camera
     Connect,
@@ -29,7 +29,7 @@ pub enum CameraMessage {
     ThreadInit,
 
     /// The camera thread has connected to the device
-    Connected,
+    Connected(Mu1603Options),
 
     /// The camera thread failed to connect to the device
     ConnectFailure(rusb::Error),
@@ -41,7 +41,7 @@ pub enum CameraMessage {
     StartStreaming,
 
     /// The camera thread has acknowledged an update to the camera state
-    UpdateAck(Mu1603State),
+    UpdateAck(Mu1603Options),
 
     Debug(&'static str),
 }
@@ -81,7 +81,7 @@ impl EguiThreadChannels {
         self.ctl_tx.send(ControlMessage::Disconnect)
     }
 
-    pub fn send_update_request(&mut self, x: Mu1603State)
+    pub fn send_update_request(&mut self, x: Mu1603Options)
         -> Result<(), SendError<ControlMessage>>
     {
         self.ctl_tx.send(ControlMessage::Update(x))

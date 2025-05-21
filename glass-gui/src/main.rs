@@ -7,9 +7,11 @@ mod camera;
 mod ipc;
 mod glow;
 mod app;
+mod acquire; 
 
 use std::sync::{Arc, RwLock};
 use glass_common::*;
+use glass_mu1603::Mu1603Mode;
 
 fn main() -> Result<(), eframe::Error> {
 
@@ -37,7 +39,11 @@ fn main() -> Result<(), eframe::Error> {
     // FIXME: This needs to scale with the configured camera resolution. 
     // We are assuming use of mode 1. 
     let rgb_data = Arc::new(RwLock::new(
-            PixelData::new(PixelFormat::Bayer8(BayerPattern::BGGR), 2320, 1740)
+        PixelData::new(
+            PixelFormat::Bayer8(BayerPattern::BGGR), 
+            Mu1603Mode::Mode1.width(), 
+            Mu1603Mode::Mode1.height()
+        )
     ));
     let rgb_data_clone = rgb_data.clone();
 

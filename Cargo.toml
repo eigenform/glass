@@ -5,5 +5,16 @@ members = [
 	"glass-gui", 
 	"glass-glow", 
 	"glass-snap-test", 
+	#"glass-render-test",
 ]
 resolver = "2"
+
+#[workspace.dependencies]
+#eframe = { version = "0.26.1", features = [ "default_fonts", "glow" ] }
+#egui_extras = { version = "0.26.1", features = [ "default", "image" ] }
+#env_logger = "0.11.1"
+#rusb = "0.9.3"
+#rand = "0.8.5"
+#glass-mu1603 = { path = "./glass-mu1603" }
+#glass-common = { path = "./glass-common" }
+#glass-glow = { path = "./glass-glow" }

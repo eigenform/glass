@@ -164,7 +164,7 @@ impl Default for AnalogGain {
 
 /// Reflecting the current state of the camera. 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Mu1603State {
+pub struct Mu1603Options {
     pub id: usize,
     pub mode: Mu1603Mode,
     pub exposure: ExposureTime,
@@ -172,7 +172,7 @@ pub struct Mu1603State {
     pub bitdepth: Mu1603BitDepth,
 }
 
-impl Mu1603State {
+impl Mu1603Options {
     pub fn exposure_ms(&self) -> usize { 
         self.exposure.milliseconds()
     }
